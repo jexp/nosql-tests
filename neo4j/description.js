@@ -1,81 +1,83 @@
 'use strict';
 
+var http = require('http');
+
 module.exports = {
   name: 'Neo4J',
 
+// new neo4j.GraphDatabase('http://username:passwordlocalhost:7474');
   startup: function (host, cb) {
-    var neo4j = require('seraph')({
-      server: 'http://' + host + ':7474',
-      user: 'neo4j',
-      pass: 'abc'
-    });
-
-    cb(neo4j);
+	var user = "neo4j";
+	var pass = "abc";
+    var neo4j = require('neo4j');
+    var db = new neo4j.GraphDatabase({url:'http://'+user+':' + pass + '@'+ host + ':8474',agent:new http.Agent({maxSockets:10})});
+    cb(db);
   },
 
   warmup: function (db, cb) {
-    module.exports.getCollection(db, 'profiles', function (err, coll) {
-      if (err) return cb(err);
 
-      module.exports.aggregate(db, coll, function (err, result) {
+    db.cypher({query:'MATCH (:PROFILES)--() return count(*) as count'},
+      function (err, result) {
         if (err) return cb(err);
 
-        console.log('INFO warmup done');
+        console.log('INFO warmup done, relationships '+result.count);
 
-        return cb(null);
-      });
-    });
+        cb(null);
+      }
+    );
   },
 
   getCollection: function (db, name, cb) {
     cb(null, name.toUpperCase());
   },
 
-  dropCollection: function (db, name, cb) {
-    name = name.toUpperCase();
-
-    db.nodesWithLabel(name, function (err, results) {
-      if (err) cb(err);
-
-      console.log('INFO clearing %d documents in %s', results.length, name);
-
-      var i = -1;
-      var next = function (err) {
-        // if (err) console.log('ERROR %s', err);
-        if (err) cb(err);
-
-        ++i;
-
-        if (i === results.length) {
-          cb();
-        }
-        else {
-          var obj = {id: results[i].id};
-          db.delete(obj, function (err) {
-            next(err);
-          });
-        }
-      };
-
-      next();
-    });
+  dropCollection: function (db, coll, cb) {
+    coll = coll.toUpperCase();
+	var deleted = 0;
+	function deleteByLabel() {
+	    db.cypher({query:'MATCH (n:' + coll + ') WITH n LIMIT 5000 OPTIONAL MATCH (n)-[r]-() DELETE n,r RETURN count(*) as deleted'},
+	      function (err, result) {
+	        if (err) return cb(err);
+			if (result.length && result[0].deleted > 0) {
+				 deleted += result[0].deleted;
+				 deleteByLabel();
+		    }
+	        else cb(null, deleted);
+	      });
+	}
+	deleteByLabel();
   },
 
   createCollection: function (db, name, cb) {
-    cb();
+    cb(null, name.toUpperCase());
   },
 
   getDocument: function (db, coll, id, cb) {
-    var obj = {_key: 'P/' + id};
-    db.find(obj, false, coll, cb);
+	db.cypher({query:'MATCH (n:'+coll+' {_key: {key}}) RETURN n',params:{key: 'P/' + id}},
+	    function (err, result) {
+	      if (err) return cb(err);
+	
+	      cb(null, result[0].n);
+	    }
+	);
   },
 
   saveDocument: function (db, coll, doc, cb) {
-    db.save(doc, coll, cb);
+	var failed = 0;
+	db.cypher({query:'CREATE (n:'+coll+' {data}) RETURN id(n) as id',params:{data:doc}},
+	    function (err, result) {
+	      if (err) {
+		    failed++;
+		    console.log("saveDocument ",failed,err);
+			return setTimeout(cb,10);
+		  }
+	      cb(null, result[0].id);
+	    }
+	);
   },
 
   aggregate: function (db, coll, cb) {
-    db.query('MATCH (f:' + coll + ') WITH f.AGE as AGE RETURN AGE, count(*)',
+    db.cypher({query:'MATCH (f:' + coll + ') RETURN f.AGE as AGE, count(*)'},
       function (err, result) {
         if (err) return cb(err);
 
@@ -85,7 +87,7 @@ module.exports = {
   },
 
   neighbors: function (db, collP, collR, id, i, cb) {
-    db.query('MATCH (s:' + collP + ' {_key:{key}})-->(n:' + collP + ') RETURN n._key', {key: 'P/' + id},
+    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-->(n:' + collP + ') RETURN n._key', params: {key: 'P/' + id}},
       function (err, result) {
         if (err) return cb(err);
 
@@ -96,7 +98,7 @@ module.exports = {
   },
 
   neighbors2: function (db, collP, collR, id, i, cb) {
-    db.query('MATCH (s:' + collP + ' {_key:{key}})-[*1..2]->(n:' + collP + ') RETURN DISTINCT n._key', {key: 'P/' + id},
+    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-->(x) MATCH (x)-->(n) RETURN n._key', params: {key: 'P/' + id}},
       function (err, result) {
         if (err) return cb(err);
 
@@ -118,7 +120,7 @@ module.exports = {
   },
 
   neighbors3: function (db, collP, collR, id, i, cb) {
-    db.query('MATCH (s:' + collP + ' {_key:{key}})-[*1..2]->(n:' + collP + ') RETURN DISTINCT n._key', {key: 'P/' + id},
+    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-[*1..3]->(n:' + collP + ') RETURN DISTINCT n._key',params: {key: 'P/' + id}},
       function (err, result) {
         if (err) return cb(err);
 
@@ -135,12 +137,12 @@ module.exports = {
   },
 
   shortestPath: function (db, collP, collR, path, i, cb) {
-    db.query('MATCH (s:' + collP + ' {_key:{from}}),(t:' + collP + ' {_key:{to}}), p = shortestPath((s)-[*..15]->(t)) RETURN p',
-      {from: 'P/' + path.from, to: 'P/' + path.to},
+    db.cypher({query:'MATCH (s:' + collP + ' {_key:{from}}),(t:' + collP + ' {_key:{to}}), p = shortestPath((s)-[*..15]->(t)) RETURN [x in nodes(p) | x._key] as path',
+      params:{from: 'P/' + path.from, to: 'P/' + path.to}},
       function (err, result) {
         if (err) return cb(err);
 
-        cb(null, result[0].length);
+        cb(null, result.length && result[0].path ? result[0].path.length : 0);
       }
     );
   }

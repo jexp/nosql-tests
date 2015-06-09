@@ -28,11 +28,12 @@
     "eslint": "^0.22.1"
   },
   "dependencies": {
+    "async": "1.2.0",
     "yargs": "^3.9.0",
     "underscore": "^1.8.3",
     "arangojs": "^3.8.1",
     "mongodb": "^2.0.33",
-    "neo4j": "^2.0.0-RC1",
+    "neo4j": "~2.0.0-RC1",
     "seraph": "^0.11.2"
   }
 }
