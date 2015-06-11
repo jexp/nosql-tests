@@ -240,22 +240,25 @@ function benchmarkSingleWrite(desc, db, resolve, reject) {
 
           var start = Date.now();
 
-          for (var k = 0; k < bodies.length; ++k) {
-            desc.saveDocument(db, coll, underscore.clone(bodies[k]), function (err, doc) {
-              if (err) return reject(err);
+			  async.eachLimit(bodies,CONCURRENT, 
+				function(data,cb) {
+			        desc.saveDocument(db, coll, data, function (err, doc) {
+			          if (err) {
+				        ++failed;
+				        console.log("singleWrite failed: "+failed);
+						setTimeout(function() { cb(null,total); }, 1);
+						return;
+					  }
 
-              if (debug) {
-                console.log('RESULT', doc);
-              }
-
-              ++total;
-
-              if (total === goal) {
-                reportResult(desc.name, 'single writes', goal, Date.now() - start);
-                return resolve();
-              }
-            });
-          }
+			          ++total;
+		              cb(null, total);
+			        });
+				}, 
+			    function(err) {
+		           if (err) return reject(err+" so far "+total+" failed "+failed);
+		           reportResult(desc.name, 'single writes', goal, Date.now() - start);
+		           return resolve();
+			    });
         });
       });
     });

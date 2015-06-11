@@ -2,6 +2,8 @@
 
 var http = require('http');
 
+function _id(v) { return parseInt(v.substring(1)); }
+
 module.exports = {
   name: 'Neo4J',
 
@@ -10,16 +12,18 @@ module.exports = {
 	var user = "neo4j";
 	var pass = "abc";
     var neo4j = require('neo4j');
-    var db = new neo4j.GraphDatabase({url:'http://'+user+':' + pass + '@'+ host + ':8474',agent:new http.Agent({maxSockets:10})});
+    var db = new neo4j.GraphDatabase({url:'http://'+user+':' + pass + '@'+ host + ':7474',agent:new http.Agent({maxSockets:10})});
     cb(db);
   },
 
   warmup: function (db, cb) {
+
     db.cypher({query:'MATCH (:PROFILES) return count(*) as count'},
       function (err, result) {
         if (err) return cb(err);
 
         console.log('INFO warmup done, relationships '+result[0].count);
+
         cb(null);
       }
     );
@@ -51,11 +55,11 @@ module.exports = {
   },
 
   getDocument: function (db, coll, id, cb) {
-	db.cypher({query:'MATCH (n:'+coll+' {_key: {key}}) RETURN n',params:{key: 'P/' + id}},
+	db.cypher({query:'MATCH (n:'+coll+' {_key: {key}}) RETURN n',params:{key: _id(id)}},
 	    function (err, result) {
 	      if (err) return cb(err);
 	
-	      cb(null, result[0].n);
+	      cb(null, result.length ? result[0].n : 0);
 	    }
 	);
   },
@@ -85,7 +89,7 @@ module.exports = {
   },
 
   neighbors: function (db, collP, collR, id, i, cb) {
-    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-->(n:' + collP + ') RETURN n._key', params: {key: 'P/' + id}},
+    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-->(n:' + collP + ') RETURN n._key', params: {key: _id(id)}},
       function (err, result) {
         if (err) return cb(err);
 
@@ -96,7 +100,7 @@ module.exports = {
   },
 
   neighbors2: function (db, collP, collR, id, i, cb) {
-    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-->(x) MATCH (x)-->(n) RETURN n._key', params: {key: 'P/' + id}},
+    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-->(x) MATCH (x)-->(n) RETURN n._key', params: {key: _id(id)}},
       function (err, result) {
         if (err) return cb(err);
 
@@ -107,7 +111,7 @@ module.exports = {
           result = result.map(function (x) { return x['n._key']; });
         }
 
-        if (result.indexOf('P/' + id) === -1) {
+        if (result.indexOf(id) === -1) {
           cb(null, result.length);
         }
         else {
@@ -118,13 +122,13 @@ module.exports = {
   },
 
   neighbors3: function (db, collP, collR, id, i, cb) {
-    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-[*1..3]->(n:' + collP + ') RETURN DISTINCT n._key',params: {key: 'P/' + id}},
+    db.cypher({query:'MATCH (s:' + collP + ' {_key:{key}})-[*1..3]->(n:' + collP + ') RETURN DISTINCT n._key',params: {key: _id(id)}},
       function (err, result) {
         if (err) return cb(err);
 
         result = result.map(function (x) { return x['n._key']; });
 
-        if (result.indexOf('P/' + id) === -1) {
+        if (result.indexOf(id) === -1) {
           cb(null, result.length);
         }
         else {
@@ -136,7 +140,7 @@ module.exports = {
 
   shortestPath: function (db, collP, collR, path, i, cb) {
     db.cypher({query:'MATCH (s:' + collP + ' {_key:{from}}),(t:' + collP + ' {_key:{to}}), p = shortestPath((s)-[*..15]->(t)) RETURN [x in nodes(p) | x._key] as path',
-      params:{from: 'P/' + path.from, to: 'P/' + path.to}},
+      params:{from: _id(path.from), to: _id(path.to)}},
       function (err, result) {
         if (err) return cb(err);
 
