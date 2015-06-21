@@ -2,7 +2,7 @@
 'use strict';
 
 var underscore = require('underscore');
-
+var async = require('async');
 // .............................................................................
 // parse command-line options
 // .............................................................................
@@ -51,6 +51,15 @@ var argv = require('yargs')
     })
   .requiresArg('a')
 
+  .option('m', {
+    alias: 'concurrency',
+    demand: false,
+    default: 12,
+    describe: 'concurency',
+    type: 'integer'
+    })
+  .requiresArg('m')
+
   .boolean('d')
   .help('h')
   .epilog('copyright 2015 Claudius Weinberger')
@@ -66,9 +75,11 @@ var tests = argv.t;
 var debug = argv.d;
 var restriction = argv.s;
 var neighbors = argv.l;
+var concurrency = argv.m;
 var host = argv.a;
 
 var total = 0;
+var failed = 0;
 
 if (tests.length === 0 || tests === 'all') {
   tests = ['warmup', 'shortest', 'neighbors', 'neighbors2', 'singleRead', 'singleWrite',
@@ -180,28 +191,33 @@ function benchmarkSingleRead(desc, db, resolve, reject) {
   try {
     var goal = ids.length;
     total = 0;
+    failed = 0;
 
     desc.getCollection(db, name, function (err, coll) {
       if (err) return reject(err);
 
       var start = Date.now();
 
-      for (var k = 0; k < ids.length; ++k) {
-        desc.getDocument(db, coll, ids[k], function (err, doc) {
-          if (err) return reject(err);
+      async.eachLimit(ids,concurrency,
+        function(id,cb) {
+          desc.getDocument(db, coll, id, function (err, doc) {
+            if (err) {
+              ++failed;
+              // throttle
+              setTimeout(function() { cb(null,total); }, 1);
+              return;
+            }
 
-          if (debug) {
-            console.log('RESULT', doc);
-          }
-
-          ++total;
-
-          if (total === goal) {
-            reportResult(desc.name, 'single reads', goal, Date.now() - start);
-            return resolve();
-          }
-        });
-      }
+            ++total;
+            cb(null, total);
+          });
+        },
+        function (err) {
+          if (err) return reject(err+" so far "+total+" failed "+failed);
+          reportResult(desc.name, 'single reads', goal, Date.now() - start);
+          return resolve();
+        }
+      );
     });
   } catch (err) {
     console.log('ERROR %s', err.stack);
@@ -230,22 +246,26 @@ function benchmarkSingleWrite(desc, db, resolve, reject) {
 
           var start = Date.now();
 
-          for (var k = 0; k < bodies.length; ++k) {
-            desc.saveDocument(db, coll, underscore.clone(bodies[k]), function (err, doc) {
-              if (err) return reject(err);
+          async.eachLimit(bodies,concurrency,
+            function(body,cb) {
+              desc.saveDocument(db, coll, underscore.clone(body), function (err, doc) {
+                if (err) {
+                  ++failed;
+                  // throttle
+                  setTimeout(function() { cb(null,total); }, 1);
+                  return;
+                }
 
-              if (debug) {
-                console.log('RESULT', doc);
-              }
-
-              ++total;
-
-              if (total === goal) {
-                reportResult(desc.name, 'single writes', goal, Date.now() - start);
-                return resolve();
-              }
-            });
-          }
+                ++total;
+                cb(null, total);
+              });
+            },
+            function (err) {
+              if (err) return reject(err+" so far "+total+" failed "+failed);
+              reportResult(desc.name, 'single writes', goal, Date.now() - start);
+              return resolve();
+            }
+          );
         });
       });
     });

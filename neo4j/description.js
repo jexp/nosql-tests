@@ -4,6 +4,8 @@ var opts = {maxSockets: 25, keepAlive: true, keepAliveMsecs: 1000};
 var Agent = require('http').Agent;
 var neo4j = require('neo4j');
 
+function _id(value) { return parseInt(value.substring(1)); }
+
 module.exports = {
   name: 'Neo4J',
 
@@ -16,7 +18,7 @@ module.exports = {
   },
 
  warmup: function (db, cb) {
-    db.cypher({query:'MATCH (:PROFILES)--() return count(*) as count'},
+    db.cypher({query:'MATCH (n:PROFILES) WITH n, n._key as key, n.AGE as age MATCH (n)--() return count(*) as count'},
       function (err, result) {
         if (err) return cb(err);
 
@@ -43,7 +45,7 @@ module.exports = {
 
   getDocument: function (db, coll, id, cb) {
     db.cypher({query: 'MATCH (f:' + coll + ' {_key:{key}}) RETURN f',
-               params: {key: id},
+               params: {key: _id(id)},
                headers: {Connection: 'keep-alive'},
                lean: true}, cb);
   },
@@ -56,7 +58,7 @@ module.exports = {
   },
 
   aggregate: function (db, coll, cb) {
-    db.cypher({query: 'MATCH (f:' + coll + ') WITH f.AGE as AGE RETURN AGE, count(*)',
+    db.cypher({query: 'MATCH (f:' + coll + ') RETURN f.AGE, count(*)',
                headers: {Connection: 'keep-alive'},
                lean: true},
 
@@ -68,8 +70,8 @@ module.exports = {
   },
 
   neighbors: function (db, collP, collR, id, i, cb) {
-    db.cypher({query: 'MATCH (s:' + collP + ' {_key:{key}})-->(n:' + collP + ') RETURN n._key',
-               params: {key: id},
+    db.cypher({query: 'MATCH (s:' + collP + ' {_key:{key}})-->(n) RETURN n._key',
+               params: {key: _id(id)},
                headers: {Connection: 'keep-alive'},
                lean: true},
 
@@ -82,9 +84,8 @@ module.exports = {
   },
 
   neighbors2: function (db, collP, collR, id, i, cb) {
-    db.cypher({query: 'MATCH (s:' + collP + ' {_key:{key}})-[*1..2]->(n:'
-                      + collP + ') RETURN DISTINCT n._key',
-               params: {key: id},
+    db.cypher({query: 'MATCH (s:' + collP + ' {_key:{key}})-->(m) MATCH (m)-->(n) RETURN distinct n._key',
+               params: {key: _id(id)},
                headers: {Connection: 'keep-alive'},
                lean: true},
 
@@ -109,8 +110,8 @@ module.exports = {
 
   shortestPath: function (db, collP, collR, path, i, cb) {
     db.cypher({query: 'MATCH (s:' + collP + ' {_key:{from}}),(t:'
-                      + collP + ' {_key:{to}}), p = shortestPath((s)-[*..15]->(t)) RETURN p',
-               params: {from: path.from, to: path.to},
+                      + collP + ' {_key:{to}}) MATCH p = shortestPath((s)-[*..15]->(t)) RETURN [n in nodes(p) | id(n)] as p',
+               params: {from: _id(path.from), to: _id(path.to)},
                headers: {Connection: 'keep-alive'},
                lean: true},
 
